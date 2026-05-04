@@ -38,9 +38,13 @@ cp -r "$REPO_ROOT/avid_panel/." "$PAYLOAD/Library/AvidTranscription/avid_panel/"
 cp -r "$SCRIPT_DIR/app/AvidTranscription.app" "$PAYLOAD/Library/AvidTranscription/"
 chmod +x "$PAYLOAD/Library/AvidTranscription/AvidTranscription.app/Contents/MacOS/AvidTranscription"
 
+# launchd plist (postinstall copies this to ~/Library/LaunchAgents/)
+cp "$SCRIPT_DIR/launchd/com.avidtranscription.server.plist" "$PAYLOAD/Library/AvidTranscription/"
+
 # ── Make scripts executable ────────────────────────────────────────────────
 chmod +x "$SCRIPT_DIR/scripts/preinstall"
 chmod +x "$SCRIPT_DIR/scripts/postinstall"
+[ -f "$SCRIPT_DIR/scripts/preuninstall" ] && chmod +x "$SCRIPT_DIR/scripts/preuninstall"
 
 # ── Build component package ──────────────────────────────────────────────────
 mkdir -p "$OUTPUT_DIR"

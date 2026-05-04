@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Unique identifier for this service -->
+    <key>Label</key>
+    <string>com.avidtranscription.server</string>
+
+    <!-- Run the server using the isolated venv Python -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/AvidTranscription/venv/bin/python</string>
+        <string>-m</string>
+        <string>avid_transcription.main</string>
+        <string>--server</string>
+        <string>--port</string>
+        <string>8765</string>
+    </array>
+
+    <!-- Start automatically when the user logs in -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if it crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Write server output to a log file (not a Terminal window) -->
+    <key>StandardOutPath</key>
+    <string>/Library/AvidTranscription/logs/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/AvidTranscription/logs/server.log</string>
+
+    <!-- Throttle restarts to avoid a crash loop -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
