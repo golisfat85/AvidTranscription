@@ -1,9 +1,19 @@
 #!/bin/bash
 # AvidTranscription.app launcher
-# Finds Python, starts the local server, and opens the panel in the browser.
+# Finds the correct Python (the one with avid_transcription installed),
+# starts the local server, and opens the panel in the browser.
 
-# ── Find Python 3.9+ in common macOS locations ───────────────────────────────
+PAYLOAD_DIR="/Library/AvidTranscription"
+WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1 || true)
+
+# Check if the installer recorded which Python it used
+RECORDED_PYTHON=""
+if [ -f "$PAYLOAD_DIR/.python_path" ]; then
+  RECORDED_PYTHON=$(cat "$PAYLOAD_DIR/.python_path")
+fi
+
 SEARCH_PATHS=(
+  $RECORDED_PYTHON   # installer-recorded Python checked first
   /usr/local/bin/python3
   /opt/homebrew/bin/python3
   /opt/homebrew/bin/python
@@ -13,46 +23,68 @@ SEARCH_PATHS=(
   /Library/Frameworks/Python.framework/Versions/3.11/bin/python3
   /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
   /Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+  "$HOME/.pyenv/shims/python3"
+  "$HOME/.pyenv/shims/python"
 )
 
+# ── Pass 1: find a Python that already has avid_transcription installed ───────
 PYTHON=""
 for p in "${SEARCH_PATHS[@]}"; do
   if [ -x "$p" ]; then
-    VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
-    if [ "$VER" = "True" ]; then
+    if "$p" -c "import avid_transcription" 2>/dev/null; then
       PYTHON="$p"
       break
     fi
   fi
 done
 
+# ── Pass 2: no Python has the package — try installing from cached wheel ──────
 if [ -z "$PYTHON" ]; then
-  osascript -e 'display dialog "Python 3.9 or later is required but was not found.\n\nInstall it from:\nhttps://www.python.org/downloads/" buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"'
+  for p in "${SEARCH_PATHS[@]}"; do
+    if [ -x "$p" ]; then
+      VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+      if [ "$VER" = "True" ]; then
+        if [ -n "$WHEEL" ]; then
+          # Attempt silent install
+          "$p" -m pip install "$WHEEL" --quiet 2>/dev/null
+          if "$p" -c "import avid_transcription" 2>/dev/null; then
+            PYTHON="$p"
+            break
+          fi
+        fi
+      fi
+    fi
+  done
+fi
+
+# ── Still nothing — show a helpful error with the log path ────────────────────
+if [ -z "$PYTHON" ]; then
+  MSG="The Avid Transcription package could not be found or installed."
+  if [ -n "$WHEEL" ]; then
+    MSG="$MSG\n\nTo install manually, open Terminal and run:\n\npython3 -m pip install \"$WHEEL\""
+  else
+    MSG="$MSG\n\nPlease re-run the installer package (.pkg)."
+  fi
+  if [ -f /tmp/avid_transcription_postinstall.log ]; then
+    MSG="$MSG\n\nInstall log: /tmp/avid_transcription_postinstall.log"
+  fi
+  osascript -e "display dialog \"$MSG\" buttons {\"OK\"} default button \"OK\" with icon stop with title \"Avid Transcription\""
   exit 1
 fi
 
-# ── Check the package is installed ───────────────────────────────────────────
-if ! "$PYTHON" -c "import avid_transcription" 2>/dev/null; then
-  osascript -e 'display dialog "The Avid Transcription package is not installed.\n\nPlease re-run the installer." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"'
-  exit 1
-fi
-
-# ── Build the command string ──────────────────────────────────────────────────
-# Use 'python -m avid_transcription.main' — works regardless of whether the
-# 'avid-transcription' script is on PATH.
+# ── Start the server in a new Terminal window ─────────────────────────────────
 SERVER_CMD="'$PYTHON' -m avid_transcription.main --server"
 
-# ── Open a Terminal window running the server ─────────────────────────────────
 osascript <<APPLESCRIPT
 tell application "Terminal"
-    set w to do script "echo '===================================='; echo '  Avid Transcription Server'; echo '===================================='; echo ''; echo '  Panel URL: http://localhost:8765'; echo ''; echo '  Keep this window open while'; echo '  working in Avid.'; echo '  Press Ctrl+C to stop.'; echo ''; $SERVER_CMD; echo ''; echo 'Server stopped.'"
+    set w to do script "echo '===================================='; echo '  Avid Transcription Server'; echo '===================================='; echo ''; echo '  Panel: http://localhost:8765'; echo '  Python: $PYTHON'; echo ''; echo '  Keep this window open.'; echo '  Press Ctrl+C to stop.'; echo ''; $SERVER_CMD"
     set custom title of w to "Avid Transcription Server"
     activate
 end tell
 APPLESCRIPT
 
-# ── Wait for the server to be ready, then open the panel in the browser ───────
-for i in {1..15}; do
+# ── Wait for the server, then open the browser ────────────────────────────────
+for i in {1..20}; do
   sleep 1
   if curl -sf http://localhost:8765/api/health &>/dev/null; then
     open "http://localhost:8765"

@@ -102,6 +102,8 @@ if [ -n "$PYTHON" ] && [ -n "$WHEEL" ]; then
     ERRORS=$((ERRORS + 1))
   else
     echo "Python package installed successfully."
+    # Record which Python was used so the app launcher can find it
+    echo "$PYTHON" > "$PAYLOAD_DIR/.python_path"
   fi
 elif [ -z "$WHEEL" ]; then
   echo "WARNING: No wheel file found in $PAYLOAD_DIR" >&2
