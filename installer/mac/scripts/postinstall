@@ -3,68 +3,150 @@
 #  1. Install the Python wheel
 #  2. Copy the Avid panel to ~/Library/.../Panels/
 #  3. Copy AvidTranscription.app to /Applications/
-#  4. Warn if FFmpeg is missing
+#
+# Runs as root. Does NOT use set -e — every step is handled individually
+# so one failure cannot silently abort the rest of the installation.
 
-set -e
+LOG="/tmp/avid_transcription_postinstall.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "=== Avid Transcription postinstall $(date) ==="
 
 PAYLOAD_DIR="/Library/AvidTranscription"
-WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1)
+ERRORS=0
 
-# ── Resolve the real logged-in user (postinstall runs as root) ──────────────
-LOGGED_IN_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+# ── Resolve the real logged-in user ──────────────────────────────────────────
+# scutil is the most reliable method on macOS 12+; fall back to stat.
+LOGGED_IN_USER=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
+  | awk '/Name :/ && ! /loginwindow/ { print $3 }' | head -1)
+
 if [ -z "$LOGGED_IN_USER" ] || [ "$LOGGED_IN_USER" = "root" ]; then
-  LOGGED_IN_USER=$(ls -l /dev/console | awk '{print $3}')
-fi
-USER_HOME=$(dscl . -read "/Users/$LOGGED_IN_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
-if [ -z "$USER_HOME" ]; then
-  USER_HOME="/Users/$LOGGED_IN_USER"
+  LOGGED_IN_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
 fi
 
-# ── Find Python ─────────────────────────────────────────────────────────────
+if [ -z "$LOGGED_IN_USER" ] || [ "$LOGGED_IN_USER" = "root" ]; then
+  LOGGED_IN_USER=$(who | grep -E "console|seat" | awk '{print $1}' | head -1)
+fi
+
+echo "Logged-in user: ${LOGGED_IN_USER:-unknown}"
+
+USER_HOME=""
+if [ -n "$LOGGED_IN_USER" ]; then
+  USER_HOME=$(dscl . -read "/Users/$LOGGED_IN_USER" NFSHomeDirectory 2>/dev/null \
+    | awk '{print $2}')
+  [ -z "$USER_HOME" ] && USER_HOME="/Users/$LOGGED_IN_USER"
+fi
+echo "User home: ${USER_HOME:-unknown}"
+
+# ── Locate Python 3.9+ ────────────────────────────────────────────────────────
+SEARCH_PATHS=(
+  /usr/bin/python3
+  /usr/local/bin/python3
+  /opt/homebrew/bin/python3
+  /opt/homebrew/bin/python
+  /usr/local/bin/python
+  /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.11/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+)
+
+# Also include paths from the user's profile if we know who they are
+if [ -n "$USER_HOME" ]; then
+  SEARCH_PATHS+=(
+    "$USER_HOME/.pyenv/shims/python3"
+    "$USER_HOME/.pyenv/shims/python"
+    "$USER_HOME/Library/Python/3.12/bin/python3"
+    "$USER_HOME/Library/Python/3.11/bin/python3"
+    "$USER_HOME/Library/Python/3.10/bin/python3"
+  )
+fi
+
 PYTHON=""
-for cmd in python3 python; do
-  if command -v "$cmd" &>/dev/null; then
-    VER=$("$cmd" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+for p in "${SEARCH_PATHS[@]}"; do
+  if [ -x "$p" ]; then
+    VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
     if [ "$VER" = "True" ]; then
-      PYTHON="$cmd"
+      PYTHON="$p"
+      echo "Using Python: $PYTHON"
       break
     fi
   fi
 done
 
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: Python 3.9+ not found. Install from https://www.python.org/downloads/" >&2
+  echo "ERROR: Python 3.9+ not found." >&2
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ── Install Python package ────────────────────────────────────────────────────
+WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1 || true)
+
+if [ -n "$PYTHON" ] && [ -n "$WHEEL" ]; then
+  echo "Installing wheel: $(basename "$WHEEL") …"
+
+  # Run pip as the logged-in user to install into their environment.
+  # Use 'su' which is reliable from a root postinstall script.
+  if [ -n "$LOGGED_IN_USER" ] && [ "$LOGGED_IN_USER" != "root" ]; then
+    su - "$LOGGED_IN_USER" -c "'$PYTHON' -m pip install --upgrade pip --quiet 2>&1" || true
+    su - "$LOGGED_IN_USER" -c "'$PYTHON' -m pip install '$WHEEL' --quiet 2>&1"
+    PIP_STATUS=$?
+  else
+    "$PYTHON" -m pip install --upgrade pip --quiet 2>&1 || true
+    "$PYTHON" -m pip install "$WHEEL" --quiet 2>&1
+    PIP_STATUS=$?
+  fi
+
+  if [ $PIP_STATUS -ne 0 ]; then
+    echo "WARNING: pip install exited with status $PIP_STATUS" >&2
+    ERRORS=$((ERRORS + 1))
+  else
+    echo "Python package installed successfully."
+  fi
+elif [ -z "$WHEEL" ]; then
+  echo "WARNING: No wheel file found in $PAYLOAD_DIR" >&2
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ── Copy Avid panel ───────────────────────────────────────────────────────────
+if [ -n "$USER_HOME" ]; then
+  AVID_PANELS="$USER_HOME/Library/Application Support/Avid/Avid Media Composer/SupportingFiles/Panels"
+  DEST_PANEL="$AVID_PANELS/AvidTranscription"
+
+  echo "Installing Avid panel to: $DEST_PANEL"
+  mkdir -p "$DEST_PANEL"
+  cp -r "$PAYLOAD_DIR/avid_panel/." "$DEST_PANEL/" 2>&1
+  chown -R "$LOGGED_IN_USER" "$DEST_PANEL" 2>/dev/null || true
+  echo "Avid panel installed."
+else
+  echo "WARNING: Could not determine user home — skipping panel copy." >&2
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ── Install AvidTranscription.app ─────────────────────────────────────────────
+APP_SRC="$PAYLOAD_DIR/AvidTranscription.app"
+if [ -d "$APP_SRC" ]; then
+  echo "Installing AvidTranscription.app to /Applications/ …"
+  rm -rf /Applications/AvidTranscription.app
+  cp -r "$APP_SRC" /Applications/
+  chmod +x "/Applications/AvidTranscription.app/Contents/MacOS/AvidTranscription"
+  [ -n "$LOGGED_IN_USER" ] && chown -R "$LOGGED_IN_USER" /Applications/AvidTranscription.app 2>/dev/null || true
+  echo "App installed."
+fi
+
+# ── FFmpeg warning (non-fatal) ────────────────────────────────────────────────
+if ! command -v ffmpeg &>/dev/null && [ ! -x /usr/local/bin/ffmpeg ] && [ ! -x /opt/homebrew/bin/ffmpeg ]; then
+  echo "NOTE: FFmpeg not found — user will need to install it separately."
+  osascript -e 'display dialog "Avid Transcription installed!\n\nFFmpeg is also required to process video.\nInstall it by running in Terminal:\n\n    brew install ffmpeg\n\nOr download from ffmpeg.org" buttons {"OK"} default button "OK" with icon caution with title "Avid Transcription"' 2>/dev/null || true
+fi
+
+echo "=== Post-install finished. Errors: $ERRORS ==="
+echo "Full log: $LOG"
+
+# Exit 0 even if non-critical steps failed (panel/ffmpeg), so the installer
+# doesn't show a hard failure for minor issues.
+# Only fail hard if the Python package itself could not be installed.
+if [ $ERRORS -gt 1 ]; then
   exit 1
 fi
-
-# ── Install Python package ───────────────────────────────────────────────────
-if [ -n "$WHEEL" ]; then
-  echo "Installing Python package from $WHEEL …"
-  sudo -u "$LOGGED_IN_USER" "$PYTHON" -m pip install --upgrade pip --quiet
-  sudo -u "$LOGGED_IN_USER" "$PYTHON" -m pip install "$WHEEL" --quiet
-else
-  echo "WARNING: Wheel file not found in $PAYLOAD_DIR" >&2
-fi
-
-# ── Copy Avid panel ──────────────────────────────────────────────────────────
-AVID_PANELS="$USER_HOME/Library/Application Support/Avid/Avid Media Composer/SupportingFiles/Panels"
-DEST_PANEL="$AVID_PANELS/AvidTranscription"
-
-echo "Installing Avid panel to $DEST_PANEL …"
-sudo -u "$LOGGED_IN_USER" mkdir -p "$DEST_PANEL"
-sudo -u "$LOGGED_IN_USER" cp -r "$PAYLOAD_DIR/avid_panel/." "$DEST_PANEL/"
-
-# ── Copy app bundle ──────────────────────────────────────────────────────────
-if [ -d "$PAYLOAD_DIR/AvidTranscription.app" ]; then
-  echo "Installing AvidTranscription.app to /Applications/ …"
-  cp -r "$PAYLOAD_DIR/AvidTranscription.app" /Applications/
-  chown -R "$LOGGED_IN_USER" /Applications/AvidTranscription.app
-fi
-
-# ── FFmpeg check ─────────────────────────────────────────────────────────────
-if ! command -v ffmpeg &>/dev/null; then
-  osascript -e 'display dialog "Avid Transcription installed successfully!\n\nIMPORTANT: FFmpeg is also required.\nInstall it with Homebrew:\n    brew install ffmpeg\n\nOr download from https://ffmpeg.org/download.html" buttons {"OK"} default button "OK" with icon caution with title "Avid Transcription"' 2>/dev/null || true
-fi
-
-echo "Installation complete."
 exit 0

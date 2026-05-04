@@ -1,22 +1,45 @@
 #!/bin/bash
 # Pre-install: verify Python 3.9+ is available.
+# Does NOT use set -e — we handle errors explicitly so the dialog
+# can be shown and the exit code is meaningful.
 
-set -e
+LOG="/tmp/avid_transcription_preinstall.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "=== Avid Transcription preinstall $(date) ==="
+
+# ── Locate Python 3.9+ ────────────────────────────────────────────────────────
+# Root's PATH is minimal; check all common macOS install locations.
+SEARCH_PATHS=(
+  /usr/bin/python3
+  /usr/local/bin/python3
+  /opt/homebrew/bin/python3
+  /opt/homebrew/bin/python
+  /usr/local/bin/python
+  /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.11/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+)
 
 PYTHON=""
-for cmd in python3 python; do
-  if command -v "$cmd" &>/dev/null; then
-    VER=$("$cmd" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+for p in "${SEARCH_PATHS[@]}"; do
+  if [ -x "$p" ]; then
+    VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
     if [ "$VER" = "True" ]; then
-      PYTHON="$cmd"
+      PYTHON="$p"
+      echo "Found Python: $PYTHON"
       break
     fi
   fi
 done
 
 if [ -z "$PYTHON" ]; then
-  osascript -e 'display dialog "Python 3.9 or later is required.\n\nPlease install Python from https://www.python.org/downloads/ then run this installer again." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription Installer"'
+  echo "ERROR: Python 3.9+ not found in standard locations."
+  # Show dialog — ignore failure (osascript may not have GUI access as root)
+  osascript -e 'display dialog "Python 3.9 or later is required but was not found.\n\nPlease install Python from:\nhttps://www.python.org/downloads/\n\nThen run this installer again." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"' 2>/dev/null || true
   exit 1
 fi
 
+echo "Pre-install check passed."
 exit 0
