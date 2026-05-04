@@ -1,8 +1,9 @@
 """
 Entry points for the Avid Transcription Plugin.
 
-  GUI mode:   avid-transcription
-  CLI mode:   avid-transcription --cli  <file> [options]
+  GUI mode:    avid-transcription
+  CLI mode:    avid-transcription --cli  <file> [options]
+  Server mode: avid-transcription --server [--port 8765]
 """
 
 from __future__ import annotations
@@ -31,6 +32,17 @@ def main() -> None:
         "--cli",
         action="store_true",
         help="Run in headless CLI mode (no GUI).",
+    )
+    parser.add_argument(
+        "--server",
+        action="store_true",
+        help="Start the local HTTP server for the Avid panel (default port 8765).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port for the local server (default: 8765).",
     )
     parser.add_argument(
         "files",
@@ -65,7 +77,9 @@ def main() -> None:
     args = parser.parse_args()
     _setup_logging(args.verbose)
 
-    if args.cli:
+    if args.server:
+        _run_server(args.port)
+    elif args.cli:
         _run_cli(args)
     else:
         _run_gui()
@@ -116,6 +130,12 @@ def _run_cli(args) -> None:
             f"  |  Duration: {result.transcription.duration:.1f}s"
             f"  |  Elapsed: {result.transcription.elapsed:.1f}s"
         )
+
+
+def _run_server(port: int) -> None:
+    from .server import run as run_server
+    _setup_logging(False)
+    run_server(port=port)
 
 
 def _run_gui() -> None:
