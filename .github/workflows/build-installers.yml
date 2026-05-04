@@ -1,0 +1,197 @@
+name: Build Installers
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 1.0.0)"
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ── Step 1: build the Python wheel once ─────────────────────────────────────
+  build-wheel:
+    name: Build Python wheel
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      wheel:   ${{ steps.ver.outputs.wheel }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel
+        run: |
+          pip install build
+          python -m build --wheel
+
+      - name: Resolve version and wheel filename
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER="${GITHUB_REF_NAME#v}"
+          fi
+          WHEEL=$(ls dist/*.whl | head -1 | xargs basename)
+          echo "version=$VER"   >> "$GITHUB_OUTPUT"
+          echo "wheel=$WHEEL"   >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+
+  # ── Step 2a: Windows .exe installer ─────────────────────────────────────────
+  build-windows:
+    name: Build Windows installer
+    needs: build-wheel
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+      - name: Copy wheel into Inno Setup directory
+        shell: pwsh
+        run: Copy-Item dist\*.whl installer\windows\
+
+      - name: Update version in setup.iss
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.build-wheel.outputs.version }}"
+          (Get-Content installer\windows\setup.iss) `
+            -replace '#define MyAppVersion   "1\.0\.0"', "#define MyAppVersion   `"$ver`"" |
+          Set-Content installer\windows\setup.iss
+
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          }
+          & $iscc installer\windows\setup.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: installer/windows/Output/*.exe
+
+  # ── Step 2b: macOS .pkg installer ───────────────────────────────────────────
+  build-mac:
+    name: Build macOS installer
+    needs: build-wheel
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+      - name: Update version in Distribution.xml and build_pkg.sh
+        run: |
+          VER="${{ needs.build-wheel.outputs.version }}"
+          sed -i '' "s/version=\"1\.0\.0\"/version=\"$VER\"/g" installer/mac/Distribution.xml
+
+      - name: Build macOS package
+        run: |
+          chmod +x installer/mac/build_pkg.sh
+          bash installer/mac/build_pkg.sh "${{ needs.build-wheel.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-installer
+          path: installer/mac/Output/*.pkg
+
+  # ── Step 3: create GitHub Release with all three downloads ──────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [build-wheel, build-windows, build-mac]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ needs.build-wheel.outputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Avid Transcription Plugin ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## Avid Transcription Plugin ${{ steps.tag.outputs.tag }}
+
+            AI-powered transcription and subtitle generation inside Avid Media Composer.
+
+            ---
+
+            ### Downloads
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | **Windows** | `AvidTranscription-*-Windows-Setup.exe` | Run as administrator |
+            | **macOS** | `AvidTranscription-*-macOS.pkg` | Double-click to install |
+            | **Python wheel** | `avid_transcription-*.whl` | Advanced: `pip install` manually |
+
+            ---
+
+            ### After installing
+
+            **Windows**
+            1. Double-click **"Start Avid Transcription Server"** on your Desktop
+            2. Open Avid → **Windows → Panels → AvidTranscription**
+
+            **macOS**
+            1. Open **AvidTranscription.app** from Applications
+            2. Open Avid → **Windows → Panels → AvidTranscription**
+
+            ---
+
+            ### Requirements
+            - Avid Media Composer 2018.x or later
+            - Python 3.9+ (installer will prompt if missing)
+            - FFmpeg — Windows: https://ffmpeg.org  macOS: `brew install ffmpeg`
+
+            ### Full documentation
+            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
+          files: |
+            artifacts/windows-installer/*.exe
+            artifacts/mac-installer/*.pkg
+            artifacts/wheel/*.whl
+          draft: false
+          prerelease: false

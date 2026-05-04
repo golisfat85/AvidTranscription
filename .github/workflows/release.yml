@@ -1,9 +1,9 @@
-name: Build & Release
+name: Quick Release (wheel only)
+# Lightweight manual trigger that publishes just the Python wheel,
+# without building the platform installers.
+# Use build-installers.yml for the full Windows + macOS release.
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
       version:
@@ -12,94 +12,33 @@ on:
         default: "v1.0.0"
 
 permissions:
-  contents: write   # needed to create GitHub Releases
+  contents: write
 
 jobs:
   build:
-    name: Build wheel & sdist
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install build tools
-        run: pip install build
-
-      - name: Build wheel and source distribution
-        run: python -m build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - run: pip install build && python -m build
+      - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
 
   release:
-    name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-
-      - name: Resolve version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: "Avid Transcription Plugin ${{ steps.version.outputs.version }}"
-          body: |
-            ## Avid Transcription Plugin ${{ steps.version.outputs.version }}
-
-            Third-party transcription and subtitle plugin for Avid Media Composer,
-            powered by OpenAI Whisper.
-
-            ### Installation
-
-            **Option A – Install from wheel (recommended)**
-            ```bash
-            pip install avid_transcription-*.whl
-            avid-transcription          # launch GUI
-            avid-transcription --help   # see CLI options
-            ```
-
-            **Option B – Install from source tarball**
-            ```bash
-            tar xzf avid-transcription-*.tar.gz
-            cd avid-transcription-*/
-            pip install .
-            ```
-
-            **Option C – Install directly from GitHub**
-            ```bash
-            pip install git+https://github.com/${{ github.repository }}.git@${{ steps.version.outputs.version }}
-            ```
-
-            ### Requirements
-            - Python 3.9+
-            - [FFmpeg](https://ffmpeg.org/download.html) on your PATH
-
-            ### Full documentation
-            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
+          tag_name: ${{ github.event.inputs.version }}
+          name: "Avid Transcription Plugin ${{ github.event.inputs.version }} (wheel)"
           files: dist/*
-          draft: false
-          prerelease: false

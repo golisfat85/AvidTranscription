@@ -1,0 +1,25 @@
+#!/bin/bash
+# AvidTranscription.app launcher
+# Opens a Terminal window running the local transcription server.
+
+TITLE="Avid Transcription Server"
+CMD="echo '=== Avid Transcription Server ==='; echo 'Listening on http://localhost:8765'; echo 'Keep this window open while working in Avid.'; echo 'Press Ctrl+C to stop.'; echo ''; avid-transcription --server; echo ''; echo 'Server stopped. Press any key to close.'; read -n1"
+
+# Try Terminal.app first, fall back to iTerm2
+if open -a Terminal 2>/dev/null; then
+  osascript <<EOF
+tell application "Terminal"
+    do script "$CMD"
+    activate
+end tell
+EOF
+else
+  osascript <<EOF
+tell application "iTerm2"
+    create window with default profile
+    tell current session of current window
+        write text "$CMD"
+    end tell
+end tell
+EOF
+fi

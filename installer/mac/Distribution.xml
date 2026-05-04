@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+
+    <title>Avid Transcription Plugin</title>
+    <welcome    file="welcome.html"    mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <options customize="never" require-scripts="true" rootVolumeOnly="false"/>
+
+    <choices-outline>
+        <line choice="default"/>
+    </choices-outline>
+
+    <choice id="default" title="Avid Transcription Plugin">
+        <pkg-ref id="com.avidtranscription.plugin"/>
+    </choice>
+
+    <pkg-ref id="com.avidtranscription.plugin"
+             version="1.0.0"
+             onConclusion="none">avid-transcription-component.pkg</pkg-ref>
+
+</installer-gui-script>

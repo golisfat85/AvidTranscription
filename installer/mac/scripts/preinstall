@@ -1,0 +1,22 @@
+#!/bin/bash
+# Pre-install: verify Python 3.9+ is available.
+
+set -e
+
+PYTHON=""
+for cmd in python3 python; do
+  if command -v "$cmd" &>/dev/null; then
+    VER=$("$cmd" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+    if [ "$VER" = "True" ]; then
+      PYTHON="$cmd"
+      break
+    fi
+  fi
+done
+
+if [ -z "$PYTHON" ]; then
+  osascript -e 'display dialog "Python 3.9 or later is required.\n\nPlease install Python from https://www.python.org/downloads/ then run this installer again." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription Installer"'
+  exit 1
+fi
+
+exit 0

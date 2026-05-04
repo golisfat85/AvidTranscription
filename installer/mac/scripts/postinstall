@@ -1,0 +1,70 @@
+#!/bin/bash
+# Post-install:
+#  1. Install the Python wheel
+#  2. Copy the Avid panel to ~/Library/.../Panels/
+#  3. Copy AvidTranscription.app to /Applications/
+#  4. Warn if FFmpeg is missing
+
+set -e
+
+PAYLOAD_DIR="/Library/AvidTranscription"
+WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1)
+
+# ── Resolve the real logged-in user (postinstall runs as root) ──────────────
+LOGGED_IN_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+if [ -z "$LOGGED_IN_USER" ] || [ "$LOGGED_IN_USER" = "root" ]; then
+  LOGGED_IN_USER=$(ls -l /dev/console | awk '{print $3}')
+fi
+USER_HOME=$(dscl . -read "/Users/$LOGGED_IN_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+if [ -z "$USER_HOME" ]; then
+  USER_HOME="/Users/$LOGGED_IN_USER"
+fi
+
+# ── Find Python ─────────────────────────────────────────────────────────────
+PYTHON=""
+for cmd in python3 python; do
+  if command -v "$cmd" &>/dev/null; then
+    VER=$("$cmd" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+    if [ "$VER" = "True" ]; then
+      PYTHON="$cmd"
+      break
+    fi
+  fi
+done
+
+if [ -z "$PYTHON" ]; then
+  echo "ERROR: Python 3.9+ not found. Install from https://www.python.org/downloads/" >&2
+  exit 1
+fi
+
+# ── Install Python package ───────────────────────────────────────────────────
+if [ -n "$WHEEL" ]; then
+  echo "Installing Python package from $WHEEL …"
+  sudo -u "$LOGGED_IN_USER" "$PYTHON" -m pip install --upgrade pip --quiet
+  sudo -u "$LOGGED_IN_USER" "$PYTHON" -m pip install "$WHEEL" --quiet
+else
+  echo "WARNING: Wheel file not found in $PAYLOAD_DIR" >&2
+fi
+
+# ── Copy Avid panel ──────────────────────────────────────────────────────────
+AVID_PANELS="$USER_HOME/Library/Application Support/Avid/Avid Media Composer/SupportingFiles/Panels"
+DEST_PANEL="$AVID_PANELS/AvidTranscription"
+
+echo "Installing Avid panel to $DEST_PANEL …"
+sudo -u "$LOGGED_IN_USER" mkdir -p "$DEST_PANEL"
+sudo -u "$LOGGED_IN_USER" cp -r "$PAYLOAD_DIR/avid_panel/." "$DEST_PANEL/"
+
+# ── Copy app bundle ──────────────────────────────────────────────────────────
+if [ -d "$PAYLOAD_DIR/AvidTranscription.app" ]; then
+  echo "Installing AvidTranscription.app to /Applications/ …"
+  cp -r "$PAYLOAD_DIR/AvidTranscription.app" /Applications/
+  chown -R "$LOGGED_IN_USER" /Applications/AvidTranscription.app
+fi
+
+# ── FFmpeg check ─────────────────────────────────────────────────────────────
+if ! command -v ffmpeg &>/dev/null; then
+  osascript -e 'display dialog "Avid Transcription installed successfully!\n\nIMPORTANT: FFmpeg is also required.\nInstall it with Homebrew:\n    brew install ffmpeg\n\nOr download from https://ffmpeg.org/download.html" buttons {"OK"} default button "OK" with icon caution with title "Avid Transcription"' 2>/dev/null || true
+fi
+
+echo "Installation complete."
+exit 0
