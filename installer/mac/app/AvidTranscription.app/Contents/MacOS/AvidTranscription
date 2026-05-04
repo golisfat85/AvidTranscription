@@ -1,25 +1,61 @@
 #!/bin/bash
 # AvidTranscription.app launcher
-# Opens a Terminal window running the local transcription server.
+# Finds Python, starts the local server, and opens the panel in the browser.
 
-TITLE="Avid Transcription Server"
-CMD="echo '=== Avid Transcription Server ==='; echo 'Listening on http://localhost:8765'; echo 'Keep this window open while working in Avid.'; echo 'Press Ctrl+C to stop.'; echo ''; avid-transcription --server; echo ''; echo 'Server stopped. Press any key to close.'; read -n1"
+# ── Find Python 3.9+ in common macOS locations ───────────────────────────────
+SEARCH_PATHS=(
+  /usr/local/bin/python3
+  /opt/homebrew/bin/python3
+  /opt/homebrew/bin/python
+  /usr/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.11/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
+  /Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+)
 
-# Try Terminal.app first, fall back to iTerm2
-if open -a Terminal 2>/dev/null; then
-  osascript <<EOF
+PYTHON=""
+for p in "${SEARCH_PATHS[@]}"; do
+  if [ -x "$p" ]; then
+    VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+    if [ "$VER" = "True" ]; then
+      PYTHON="$p"
+      break
+    fi
+  fi
+done
+
+if [ -z "$PYTHON" ]; then
+  osascript -e 'display dialog "Python 3.9 or later is required but was not found.\n\nInstall it from:\nhttps://www.python.org/downloads/" buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"'
+  exit 1
+fi
+
+# ── Check the package is installed ───────────────────────────────────────────
+if ! "$PYTHON" -c "import avid_transcription" 2>/dev/null; then
+  osascript -e 'display dialog "The Avid Transcription package is not installed.\n\nPlease re-run the installer." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"'
+  exit 1
+fi
+
+# ── Build the command string ──────────────────────────────────────────────────
+# Use 'python -m avid_transcription.main' — works regardless of whether the
+# 'avid-transcription' script is on PATH.
+SERVER_CMD="'$PYTHON' -m avid_transcription.main --server"
+
+# ── Open a Terminal window running the server ─────────────────────────────────
+osascript <<APPLESCRIPT
 tell application "Terminal"
-    do script "$CMD"
+    set w to do script "echo '===================================='; echo '  Avid Transcription Server'; echo '===================================='; echo ''; echo '  Panel URL: http://localhost:8765'; echo ''; echo '  Keep this window open while'; echo '  working in Avid.'; echo '  Press Ctrl+C to stop.'; echo ''; $SERVER_CMD; echo ''; echo 'Server stopped.'"
+    set custom title of w to "Avid Transcription Server"
     activate
 end tell
-EOF
-else
-  osascript <<EOF
-tell application "iTerm2"
-    create window with default profile
-    tell current session of current window
-        write text "$CMD"
-    end tell
-end tell
-EOF
-fi
+APPLESCRIPT
+
+# ── Wait for the server to be ready, then open the panel in the browser ───────
+for i in {1..15}; do
+  sleep 1
+  if curl -sf http://localhost:8765/api/health &>/dev/null; then
+    open "http://localhost:8765"
+    break
+  fi
+done
