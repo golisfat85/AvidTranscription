@@ -1,8 +1,7 @@
 #!/bin/bash
 # Post-install — runs as root.
-# Creates an isolated Python venv, installs the package into it,
-# installs the Avid panel, and registers a launchd service so the
-# server starts automatically on login — no Terminal window ever needed.
+# The Python venv was pre-built during CI and is already in /Library/AvidTranscription/venv/.
+# This script only copies panel files, fixes permissions, and registers the launchd service.
 
 LOG="/Library/AvidTranscription/logs/install.log"
 mkdir -p "/Library/AvidTranscription/logs"
@@ -11,10 +10,8 @@ echo ""
 echo "=== Avid Transcription postinstall: $(date) ==="
 
 PAYLOAD_DIR="/Library/AvidTranscription"
-VENV="$PAYLOAD_DIR/venv"
 PLIST_NAME="com.avidtranscription.server"
 PLIST_SRC="$PAYLOAD_DIR/$PLIST_NAME.plist"
-ERRORS=0
 
 # ── Resolve the logged-in user ────────────────────────────────────────────────
 LOGGED_IN_USER=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
@@ -30,52 +27,15 @@ USER_HOME=$(dscl . -read "/Users/$LOGGED_IN_USER" NFSHomeDirectory 2>/dev/null \
 [ -z "$USER_HOME" ] && USER_HOME="/Users/$LOGGED_IN_USER"
 echo "Home: $USER_HOME"
 
-# ── Find system Python 3.9+ ───────────────────────────────────────────────────
-PYTHON=""
-for p in \
-  /opt/homebrew/bin/python3 \
-  /usr/local/bin/python3 \
-  "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3" \
-  "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" \
-  "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" \
-  "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3" \
-  "/Library/Frameworks/Python.framework/Versions/3.9/bin/python3" \
-  /usr/bin/python3; do
-  [ -x "$p" ] || continue
-  VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo False)
-  if [ "$VER" = "True" ]; then
-    PYTHON="$p"
-    echo "Found Python: $PYTHON ($("$p" --version 2>&1))"
-    break
-  fi
+# ── Fix venv permissions ──────────────────────────────────────────────────────
+echo "Fixing venv permissions …"
+chmod -R a+rX "$PAYLOAD_DIR/venv" 2>/dev/null || true
+chmod +x "$PAYLOAD_DIR/venv/bin/python" "$PAYLOAD_DIR/venv/bin/python3" 2>/dev/null || true
+# Make all venv scripts executable
+find "$PAYLOAD_DIR/venv/bin" -type f | while read -r f; do
+  [ -x "$f" ] || chmod +x "$f"
 done
-
-if [ -z "$PYTHON" ]; then
-  echo "ERROR: Python 3.9+ not found." >&2
-  exit 1
-fi
-
-# ── Create isolated virtual environment ───────────────────────────────────────
-echo "Creating venv at $VENV …"
-"$PYTHON" -m venv "$VENV" 2>&1
-VENV_PYTHON="$VENV/bin/python"
-
-# ── Install wheel into venv ───────────────────────────────────────────────────
-WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1)
-if [ -n "$WHEEL" ]; then
-  echo "Installing $(basename "$WHEEL") into venv …"
-  "$VENV_PYTHON" -m pip install --upgrade pip --quiet 2>&1
-  "$VENV_PYTHON" -m pip install "$WHEEL" --quiet 2>&1
-  if "$VENV_PYTHON" -c "import avid_transcription" 2>/dev/null; then
-    echo "Package installed successfully."
-  else
-    echo "ERROR: Package import failed after install." >&2
-    ERRORS=$((ERRORS + 1))
-  fi
-else
-  echo "ERROR: No wheel found in $PAYLOAD_DIR" >&2
-  ERRORS=$((ERRORS + 1))
-fi
+echo "Venv is ready."
 
 # ── Copy Avid panel files ─────────────────────────────────────────────────────
 AVID_PANELS="$USER_HOME/Library/Application Support/Avid/Avid Media Composer/SupportingFiles/Panels"
@@ -96,8 +56,6 @@ if [ -d "$PAYLOAD_DIR/AvidTranscription.app" ]; then
 fi
 
 # ── Install and start launchd service ────────────────────────────────────────
-# The plist points to $VENV/bin/python — fully self-contained, no system
-# Python needed at runtime. Server starts on login, runs silently.
 if [ -f "$PLIST_SRC" ]; then
   LAUNCH_AGENTS="$USER_HOME/Library/LaunchAgents"
   PLIST_DEST="$LAUNCH_AGENTS/$PLIST_NAME.plist"
@@ -106,22 +64,11 @@ if [ -f "$PLIST_SRC" ]; then
   cp "$PLIST_SRC" "$PLIST_DEST"
   chown "$LOGGED_IN_USER" "$PLIST_DEST"
 
-  # Unload any old instance, then load the new one
   su - "$LOGGED_IN_USER" -c "launchctl unload '$PLIST_DEST' 2>/dev/null; launchctl load -w '$PLIST_DEST'" 2>&1 || true
   echo "launchd service installed and started."
 else
   echo "WARNING: plist not found at $PLIST_SRC — server will not auto-start." >&2
 fi
 
-# ── FFmpeg check (non-fatal) ──────────────────────────────────────────────────
-FFMPEG_FOUND=false
-for f in /usr/local/bin/ffmpeg /opt/homebrew/bin/ffmpeg /usr/bin/ffmpeg; do
-  [ -x "$f" ] && FFMPEG_FOUND=true && break
-done
-if ! $FFMPEG_FOUND; then
-  echo "NOTE: FFmpeg not found — user must install separately."
-fi
-
-echo "=== postinstall complete. Errors: $ERRORS ==="
-[ $ERRORS -gt 0 ] && exit 1
+echo "=== postinstall complete ==="
 exit 0

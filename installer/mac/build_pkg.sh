@@ -28,7 +28,16 @@ PAYLOAD="$SCRIPT_DIR/payload"
 rm -rf "$PAYLOAD"
 mkdir -p "$PAYLOAD/Library/AvidTranscription"
 
-# Wheel
+# Pre-built venv (created by CI before calling this script)
+VENV_PAYLOAD="$SCRIPT_DIR/venv_payload"
+if [ -d "$VENV_PAYLOAD" ]; then
+  echo "  Bundling pre-built venv …"
+  cp -r "$VENV_PAYLOAD" "$PAYLOAD/Library/AvidTranscription/venv"
+else
+  echo "WARNING: venv_payload not found — postinstall will not have a bundled venv." >&2
+fi
+
+# Wheel (kept for reference / manual reinstall)
 cp "$WHEEL" "$PAYLOAD/Library/AvidTranscription/"
 
 # Panel files

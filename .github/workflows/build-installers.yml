@@ -99,7 +99,8 @@ jobs:
   build-mac:
     name: Build macOS installer
     needs: build-wheel
-    runs-on: macos-latest
+    # macos-13 is Intel; Rosetta runs it on Apple Silicon — max compatibility.
+    runs-on: macos-13
 
     steps:
       - uses: actions/checkout@v4
@@ -110,7 +111,25 @@ jobs:
           name: wheel
           path: dist/
 
-      - name: Update version in Distribution.xml and build_pkg.sh
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pre-build Python venv with package installed
+        run: |
+          # Build a self-contained venv that will be bundled into the .pkg.
+          # The postinstall script will NOT run pip — it just copies files.
+          VENV_DIR="installer/mac/venv_payload"
+          python3 -m venv --copies "$VENV_DIR"
+          "$VENV_DIR/bin/pip" install --upgrade pip --quiet
+          "$VENV_DIR/bin/pip" install dist/*.whl --quiet
+          # Verify import works
+          "$VENV_DIR/bin/python" -c "import avid_transcription; print('Package OK')"
+          echo "Venv built at $VENV_DIR"
+          du -sh "$VENV_DIR"
+
+      - name: Update version in Distribution.xml
         run: |
           VER="${{ needs.build-wheel.outputs.version }}"
           sed -i '' "s/version=\"1\.0\.0\"/version=\"$VER\"/g" installer/mac/Distribution.xml

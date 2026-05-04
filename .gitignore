@@ -4,3 +4,9 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
+installer/mac/venv_payload/
+installer/mac/payload/
+installer/mac/Output/
+installer/mac/*.pkg
+installer/windows/Output/
+installer/windows/*.whl
