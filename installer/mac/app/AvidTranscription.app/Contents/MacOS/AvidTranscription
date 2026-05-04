@@ -13,8 +13,10 @@ PLIST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 
 # ── Ensure the background service is running ─────────────────────────────────
 if [ -f "$PLIST" ]; then
-  # Load if not already running (safe to call even if already loaded)
-  launchctl load -w "$PLIST" 2>/dev/null || true
+  USER_ID=$(id -u)
+  # Bootstrap is the correct command on Ventura/Sonoma; fall back to legacy load.
+  launchctl bootstrap "gui/$USER_ID" "$PLIST" 2>/dev/null || \
+    launchctl load -w "$PLIST" 2>/dev/null || true
 else
   echo "WARNING: launchd plist not found — server may not be running."
 fi

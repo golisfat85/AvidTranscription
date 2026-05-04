@@ -64,8 +64,21 @@ if [ -f "$PLIST_SRC" ]; then
   cp "$PLIST_SRC" "$PLIST_DEST"
   chown "$LOGGED_IN_USER" "$PLIST_DEST"
 
-  su - "$LOGGED_IN_USER" -c "launchctl unload '$PLIST_DEST' 2>/dev/null; launchctl load -w '$PLIST_DEST'" 2>&1 || true
-  echo "launchd service installed and started."
+  # Resolve the numeric UID for launchctl bootstrap (required on Sonoma 14+).
+  USER_ID=$(id -u "$LOGGED_IN_USER" 2>/dev/null || dscl . -read "/Users/$LOGGED_IN_USER" UniqueID 2>/dev/null | awk '{print $2}')
+
+  if [ -n "$USER_ID" ]; then
+    # Remove any previously registered instance first (ignore errors).
+    launchctl bootout "gui/$USER_ID/$PLIST_NAME" 2>/dev/null || true
+    # Bootstrap into the user's GUI session — works on macOS Ventura + Sonoma.
+    launchctl bootstrap "gui/$USER_ID" "$PLIST_DEST" 2>/dev/null || \
+      su - "$LOGGED_IN_USER" -c "launchctl load -w '$PLIST_DEST'" 2>/dev/null || true
+    echo "launchd service installed (uid=$USER_ID)."
+  else
+    # Fallback for edge cases where id -u fails.
+    su - "$LOGGED_IN_USER" -c "launchctl unload '$PLIST_DEST' 2>/dev/null; launchctl load -w '$PLIST_DEST'" 2>/dev/null || true
+    echo "launchd service installed (fallback)."
+  fi
 else
   echo "WARNING: plist not found at $PLIST_SRC — server will not auto-start." >&2
 fi

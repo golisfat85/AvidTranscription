@@ -35,7 +35,12 @@ from .subtitle_generator import SubtitleGenerator
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8765
-PANEL_DIR = Path(__file__).parent.parent / "avid_panel"
+
+# When installed into the system via the .pkg the panel lives alongside the
+# venv, not relative to the Python module inside site-packages.
+_INSTALLED_PANEL = Path("/Library/AvidTranscription/avid_panel")
+_DEV_PANEL = Path(__file__).parent.parent / "avid_panel"
+PANEL_DIR = _INSTALLED_PANEL if _INSTALLED_PANEL.exists() else _DEV_PANEL
 
 # ---------------------------------------------------------------------------
 # Job store
