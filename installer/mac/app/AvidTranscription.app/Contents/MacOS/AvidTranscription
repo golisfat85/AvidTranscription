@@ -1,93 +1,118 @@
 #!/bin/bash
-# AvidTranscription.app launcher
-# Finds the correct Python (the one with avid_transcription installed),
-# starts the local server, and opens the panel in the browser.
+# AvidTranscription.app — server launcher
+# Log everything to ~/Library/Logs/AvidTranscription.log from line 1
+# so any crash leaves a trace the user can inspect.
+
+LOG="$HOME/Library/Logs/AvidTranscription.log"
+mkdir -p "$(dirname "$LOG")"
+exec >> "$LOG" 2>&1
+echo ""
+echo "=== AvidTranscription.app launched: $(date) ==="
 
 PAYLOAD_DIR="/Library/AvidTranscription"
-WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1 || true)
 
-# Check if the installer recorded which Python it used
-RECORDED_PYTHON=""
-if [ -f "$PAYLOAD_DIR/.python_path" ]; then
-  RECORDED_PYTHON=$(cat "$PAYLOAD_DIR/.python_path")
-fi
+# ── Step 1: find Python that has the package installed ───────────────────────
 
-SEARCH_PATHS=(
-  $RECORDED_PYTHON   # installer-recorded Python checked first
-  /usr/local/bin/python3
-  /opt/homebrew/bin/python3
-  /opt/homebrew/bin/python
-  /usr/bin/python3
-  /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
-  /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
-  /Library/Frameworks/Python.framework/Versions/3.11/bin/python3
-  /Library/Frameworks/Python.framework/Versions/3.10/bin/python3
-  /Library/Frameworks/Python.framework/Versions/3.9/bin/python3
-  "$HOME/.pyenv/shims/python3"
-  "$HOME/.pyenv/shims/python"
-)
+find_python() {
+  local candidates=(
+    "/opt/homebrew/bin/python3"
+    "/usr/local/bin/python3"
+    "/usr/bin/python3"
+    "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3"
+    "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+    "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+    "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3"
+    "/Library/Frameworks/Python.framework/Versions/3.9/bin/python3"
+    "$HOME/.pyenv/shims/python3"
+  )
 
-# ── Pass 1: find a Python that already has avid_transcription installed ───────
-PYTHON=""
-for p in "${SEARCH_PATHS[@]}"; do
-  if [ -x "$p" ]; then
-    if "$p" -c "import avid_transcription" 2>/dev/null; then
-      PYTHON="$p"
-      break
-    fi
+  # Prefer the Python the installer recorded
+  local recorded="$PAYLOAD_DIR/.python_path"
+  if [ -f "$recorded" ]; then
+    local rp
+    rp=$(cat "$recorded")
+    candidates=("$rp" "${candidates[@]}")
   fi
-done
 
-# ── Pass 2: no Python has the package — try installing from cached wheel ──────
+  for p in "${candidates[@]}"; do
+    [ -z "$p" ] && continue
+    [ -x "$p" ] || continue
+    echo "Checking: $p"
+    if "$p" -c "import avid_transcription" 2>/dev/null; then
+      echo "Found package in: $p"
+      echo "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON=$(find_python)
+
+# ── Step 2: if not found, try installing from the cached wheel ───────────────
+
 if [ -z "$PYTHON" ]; then
-  for p in "${SEARCH_PATHS[@]}"; do
-    if [ -x "$p" ]; then
-      VER=$("$p" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
-      if [ "$VER" = "True" ]; then
-        if [ -n "$WHEEL" ]; then
-          # Attempt silent install
-          "$p" -m pip install "$WHEEL" --quiet 2>/dev/null
-          if "$p" -c "import avid_transcription" 2>/dev/null; then
-            PYTHON="$p"
-            break
-          fi
-        fi
+  echo "Package not found — attempting install from cached wheel…"
+  WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1)
+
+  for p in "/opt/homebrew/bin/python3" "/usr/local/bin/python3" "/usr/bin/python3" \
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" \
+            "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"; do
+    [ -x "$p" ] || continue
+    if [ -n "$WHEEL" ]; then
+      echo "Trying: $p -m pip install $WHEEL"
+      "$p" -m pip install "$WHEEL" --quiet 2>&1 || true
+      if "$p" -c "import avid_transcription" 2>/dev/null; then
+        PYTHON="$p"
+        echo "$p" > "$PAYLOAD_DIR/.python_path" 2>/dev/null || true
+        break
       fi
     fi
   done
 fi
 
-# ── Still nothing — show a helpful error with the log path ────────────────────
+# ── Step 3: if still nothing, show an error dialog and bail ─────────────────
+
 if [ -z "$PYTHON" ]; then
-  MSG="The Avid Transcription package could not be found or installed."
+  echo "ERROR: Could not find avid_transcription in any Python."
+  WHEEL=$(ls "$PAYLOAD_DIR"/*.whl 2>/dev/null | head -1)
   if [ -n "$WHEEL" ]; then
-    MSG="$MSG\n\nTo install manually, open Terminal and run:\n\npython3 -m pip install \"$WHEEL\""
+    MANUAL="To fix, open Terminal and run:\n\npython3 -m pip install \"$WHEEL\""
   else
-    MSG="$MSG\n\nPlease re-run the installer package (.pkg)."
+    MANUAL="Please re-run the installer (.pkg)."
   fi
-  if [ -f /tmp/avid_transcription_postinstall.log ]; then
-    MSG="$MSG\n\nInstall log: /tmp/avid_transcription_postinstall.log"
-  fi
-  osascript -e "display dialog \"$MSG\" buttons {\"OK\"} default button \"OK\" with icon stop with title \"Avid Transcription\""
+  osascript -e "display dialog \"Could not find the Avid Transcription package.\n\n$MANUAL\n\nFull log: $LOG\" buttons {\"OK\"} default button \"OK\" with icon stop with title \"Avid Transcription\""
   exit 1
 fi
 
-# ── Start the server in a new Terminal window ─────────────────────────────────
-SERVER_CMD="'$PYTHON' -m avid_transcription.main --server"
+echo "Using Python: $PYTHON"
 
-osascript <<APPLESCRIPT
-tell application "Terminal"
-    set w to do script "echo '===================================='; echo '  Avid Transcription Server'; echo '===================================='; echo ''; echo '  Panel: http://localhost:8765'; echo '  Python: $PYTHON'; echo ''; echo '  Keep this window open.'; echo '  Press Ctrl+C to stop.'; echo ''; $SERVER_CMD"
-    set custom title of w to "Avid Transcription Server"
-    activate
-end tell
-APPLESCRIPT
+# ── Step 4: open a Terminal window running the server ────────────────────────
 
-# ── Wait for the server, then open the browser ────────────────────────────────
-for i in {1..20}; do
+CMD="$PYTHON -m avid_transcription.main --server"
+echo "Running: $CMD"
+
+osascript -e "tell application \"Terminal\" to do script \"$CMD\""
+osascript -e "tell application \"Terminal\" to activate"
+
+# ── Step 5: wait for server then open browser ────────────────────────────────
+
+echo "Waiting for server…"
+READY=0
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   sleep 1
-  if curl -sf http://localhost:8765/api/health &>/dev/null; then
-    open "http://localhost:8765"
+  if curl -sf "http://localhost:8765/api/health" > /dev/null 2>&1; then
+    READY=1
     break
   fi
 done
+
+if [ "$READY" = "1" ]; then
+  echo "Server ready — opening browser."
+  open "http://localhost:8765"
+else
+  echo "Server did not respond in 20s — opening browser anyway."
+  open "http://localhost:8765"
+fi
+
+echo "=== Launch complete ==="
