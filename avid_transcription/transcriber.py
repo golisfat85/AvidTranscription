@@ -108,7 +108,7 @@ class Transcriber:
     def unload(self) -> None:
         """Release the model from memory."""
         self._model = None
-        import gc, torch  # noqa: F401
+        import gc
         try:
             import torch
             torch.cuda.empty_cache()
@@ -131,9 +131,15 @@ class Transcriber:
                 self._load_faster_whisper(model_name, callback)
                 return
             except ImportError:
-                logger.warning("faster-whisper not installed; falling back to openai-whisper")
+                logger.warning("faster-whisper not installed; trying openai-whisper")
 
-        self._load_openai_whisper(model_name, callback)
+        try:
+            self._load_openai_whisper(model_name, callback)
+        except ImportError:
+            raise TranscriptionError(
+                "No Whisper engine found. Install faster-whisper: "
+                "pip install faster-whisper"
+            )
 
     def _load_faster_whisper(self, model_name: str, callback: Optional[ProgressCallback]) -> None:
         from faster_whisper import WhisperModel  # type: ignore
