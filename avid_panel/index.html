@@ -12,10 +12,19 @@
   <header>
     <div id="server-indicator" title="Server status"></div>
     <h1>Avid Transcription</h1>
-    <span id="server-label" style="font-size:10px;color:var(--text-muted)">Connecting…</span>
-    <a href="http://localhost:8765" target="_blank" title="Open in browser tab"
-       style="font-size:10px;color:var(--text-muted);text-decoration:none;margin-left:6px">⤢</a>
+    <span id="server-label">Connecting…</span>
   </header>
+
+  <!-- Offline banner -->
+  <div id="offline-banner" class="banner banner-warn" hidden>
+    Server offline. Open <strong>AvidTranscription.app</strong> from your Applications folder to start it.
+  </div>
+
+  <!-- FFmpeg missing banner -->
+  <div id="ffmpeg-banner" class="banner banner-error" hidden>
+    ⚠ FFmpeg not found. Install it to enable transcription:
+    <code>brew install ffmpeg</code>
+  </div>
 
   <div id="scroll-area">
 
@@ -23,15 +32,15 @@
     <div class="card">
       <div class="card-title">Media Source</div>
 
-      <div class="field">
-        <label>Media file path</label>
-        <div style="display:flex;gap:6px">
-          <input type="text" id="media-path" placeholder="/path/to/clip.mxf">
-          <button class="btn btn-secondary btn-sm" id="btn-from-avid" title="Use clip selected in Avid bin">From Bin</button>
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-hint">Drop a media file here</div>
+        <div class="path-row">
+          <input type="text" id="media-path" placeholder="/path/to/clip.mxf" spellcheck="false">
+          <button class="btn btn-secondary btn-sm" id="btn-browse">Browse…</button>
         </div>
       </div>
 
-      <div class="row">
+      <div class="row" style="margin-top:8px">
         <div class="field">
           <label>Audio track</label>
           <select id="audio-track">
@@ -64,13 +73,17 @@
         <div class="field">
           <label>Whisper model</label>
           <select id="model">
-            <option value="tiny">tiny</option>
-            <option value="base" selected>base</option>
-            <option value="small">small</option>
-            <option value="medium">medium</option>
-            <option value="large-v3">large-v3</option>
+            <option value="tiny">tiny · fastest · lowest accuracy</option>
+            <option value="base" selected>base · fast · good accuracy</option>
+            <option value="small">small · balanced</option>
+            <option value="medium">medium · slower · better</option>
+            <option value="large-v3">large-v3 · slowest · best</option>
           </select>
         </div>
+      </div>
+      <div class="model-note" id="model-note">First use downloads the model (~145 MB)</div>
+
+      <div class="row" style="margin-top:8px">
         <div class="field">
           <label>Language</label>
           <select id="language">
@@ -91,14 +104,13 @@
             <option value="hi">Hindi</option>
           </select>
         </div>
-      </div>
-
-      <div class="field">
-        <label>Task</label>
-        <select id="task">
-          <option value="transcribe">Transcribe</option>
-          <option value="translate">Translate to English</option>
-        </select>
+        <div class="field">
+          <label>Task</label>
+          <select id="task">
+            <option value="transcribe">Transcribe</option>
+            <option value="translate">Translate → English</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -107,7 +119,7 @@
       <div class="card-title">Output Formats</div>
       <div class="checks">
         <label><input type="checkbox" id="fmt-srt" checked> SRT</label>
-        <label><input type="checkbox" id="fmt-vtt" checked> WebVTT</label>
+        <label><input type="checkbox" id="fmt-vtt"> WebVTT</label>
         <label><input type="checkbox" id="fmt-csv"> CSV</label>
         <label><input type="checkbox" id="fmt-markers" checked> Avid Markers</label>
       </div>
@@ -117,7 +129,7 @@
     <button class="btn btn-primary" id="btn-transcribe" disabled>Transcribe</button>
 
     <!-- ── Progress ── -->
-    <div id="progress-wrap" class="card">
+    <div id="progress-wrap" class="card" hidden>
       <div class="card-title">Progress</div>
       <div class="progress-bar-track">
         <div class="progress-bar-fill" id="progress-fill"></div>
@@ -125,24 +137,26 @@
       <div id="progress-msg">Waiting…</div>
     </div>
 
-    <!-- ── Transcript preview ── -->
-    <div id="preview-wrap" class="card">
-      <div class="card-title">Transcript Preview</div>
-      <pre id="preview"></pre>
-    </div>
+    <!-- ── Results ── -->
+    <div id="results-wrap" hidden>
+      <div class="card">
+        <div class="card-title">Transcript Preview</div>
+        <pre id="preview"></pre>
+      </div>
 
-    <!-- ── Post-transcription actions ── -->
-    <div id="actions-wrap">
-      <button class="btn btn-secondary btn-sm" id="btn-import-markers">Import Markers into Avid</button>
-      <button class="btn btn-secondary btn-sm" id="btn-copy-srt">Copy SRT</button>
-      <button class="btn btn-secondary btn-sm" id="btn-new">New Job</button>
+      <div id="result-meta" class="result-meta"></div>
+
+      <div class="action-row">
+        <button class="btn btn-secondary" id="btn-reveal">Open Output Folder</button>
+        <button class="btn btn-secondary" id="btn-copy-srt">Copy SRT</button>
+        <button class="btn btn-secondary" id="btn-new">New Job</button>
+      </div>
     </div>
 
   </div><!-- /scroll-area -->
-</div><!-- /app -->
+</div>
 
 <div id="toast"></div>
-
 <script src="js/app.js"></script>
 </body>
 </html>

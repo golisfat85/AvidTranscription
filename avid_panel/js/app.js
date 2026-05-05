@@ -1,99 +1,103 @@
 /**
  * Avid Transcription Panel — JavaScript
- *
- * Communicates with the local Python server (localhost:8765).
- * Also integrates with Avid Media Composer's JS panel API when available,
- * falling back gracefully to manual file-path input when running outside Avid.
+ * Communicates with the local Python server (http://localhost:8765).
  */
 
-const SERVER = "http://localhost:8765";
-const POLL_MS = 800;
+const SERVER   = "http://localhost:8765";
+const POLL_MS  = 800;
+const SETTINGS_KEY = "avid_transcription_settings";
+
+// Model download sizes (approx MB, shown as hint)
+const MODEL_SIZES = {
+  "tiny": "~75 MB", "base": "~145 MB", "small": "~465 MB",
+  "medium": "~1.5 GB", "large-v3": "~3.1 GB",
+};
 
 // ── State ──────────────────────────────────────────────────────────────────
 
 let currentJobId = null;
-let pollTimer = null;
-let lastResult = null;
-let serverReady = false;
+let pollTimer    = null;
+let lastResult   = null;
+let serverReady  = false;
 
-// ── DOM refs ───────────────────────────────────────────────────────────────
+// ── DOM ────────────────────────────────────────────────────────────────────
 
 const $  = id => document.getElementById(id);
-const indicator   = $("server-indicator");
-const serverLabel = $("server-label");
-const mediaPath   = $("media-path");
-const btnFromAvid = $("btn-from-avid");
-const btnTranscribe = $("btn-transcribe");
-const progressWrap  = $("progress-wrap");
-const progressFill  = $("progress-fill");
-const progressMsg   = $("progress-msg");
-const previewWrap   = $("preview-wrap");
-const preview       = $("preview");
-const actionsWrap   = $("actions-wrap");
-const btnImport     = $("btn-import-markers");
-const btnCopySrt    = $("btn-copy-srt");
-const btnNew        = $("btn-new");
-const toast         = $("toast");
+const indicator    = $("server-indicator");
+const serverLabel  = $("server-label");
+const offlineBanner= $("offline-banner");
+const ffmpegBanner = $("ffmpeg-banner");
+const dropZone     = $("drop-zone");
+const mediaPath    = $("media-path");
+const btnBrowse    = $("btn-browse");
+const btnTranscribe= $("btn-transcribe");
+const progressWrap = $("progress-wrap");
+const progressFill = $("progress-fill");
+const progressMsg  = $("progress-msg");
+const resultsWrap  = $("results-wrap");
+const resultMeta   = $("result-meta");
+const preview      = $("preview");
+const btnReveal    = $("btn-reveal");
+const btnCopySrt   = $("btn-copy-srt");
+const btnNew       = $("btn-new");
+const modelSelect  = $("model");
+const modelNote    = $("model-note");
+const toast        = $("toast");
 
-// ── Avid Media Composer JS API ─────────────────────────────────────────────
+// ── Settings persistence ────────────────────────────────────────────────────
 
-/**
- * Returns the file-system path of the currently selected clip in Avid's bin.
- * Works when the panel is running inside Media Composer; gracefully returns
- * null when running in a browser for development/testing.
- */
-async function getAvidSelectedClipPath() {
-  try {
-    // Avid MC exposes window.avidmc (older) or window.avid.mc (newer builds)
-    const mc = window.avidmc || (window.avid && window.avid.mc);
-    if (!mc) return null;
-
-    const clips = await mc.getSelectedClips();
-    if (!clips || clips.length === 0) { showToast("No clip selected in bin", "error"); return null; }
-
-    const clip = clips[0];
-    // Resolve the linked media file path
-    const path = clip.filePath || clip.mediaFilePath || clip.path || null;
-    return path;
-  } catch (e) {
-    console.warn("Avid MC API unavailable:", e);
-    return null;
-  }
+function saveSettings() {
+  const s = {
+    model:      modelSelect.value,
+    language:   $("language").value,
+    task:       $("task").value,
+    audioTrack: $("audio-track").value,
+    fps:        $("fps").value,
+    fmtSrt:     $("fmt-srt").checked,
+    fmtVtt:     $("fmt-vtt").checked,
+    fmtCsv:     $("fmt-csv").checked,
+    fmtMarkers: $("fmt-markers").checked,
+  };
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (_) {}
 }
 
-/**
- * Import marker data back into the currently open Avid sequence/bin.
- */
-async function importMarkersIntoAvid(markersText) {
+function loadSettings() {
   try {
-    const mc = window.avidmc || (window.avid && window.avid.mc);
-    if (!mc) {
-      showToast("Avid API not available – copy the marker file manually", "error");
-      return false;
-    }
-    // Parse our tab-delimited markers into the MC marker format
-    const lines = markersText.trim().split("\n").slice(1);  // skip header
-    const markers = lines.map(line => {
-      const [name, inTC, outTC, track, color, comment] = line.split("\t");
-      return { name, inTC, outTC, track, color: color || "Red", comment };
-    });
-    await mc.importMarkers(markers);
-    showToast("Markers imported into Avid", "success");
-    return true;
-  } catch (e) {
-    console.warn("importMarkers failed:", e);
-    showToast("Could not import markers: " + e.message, "error");
-    return false;
-  }
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+    if (!s) return;
+    if (s.model)      modelSelect.value          = s.model;
+    if (s.language)   $("language").value         = s.language;
+    if (s.task)       $("task").value             = s.task;
+    if (s.audioTrack) $("audio-track").value      = s.audioTrack;
+    if (s.fps)        $("fps").value              = s.fps;
+    if (s.fmtSrt     !== undefined) $("fmt-srt").checked     = s.fmtSrt;
+    if (s.fmtVtt     !== undefined) $("fmt-vtt").checked     = s.fmtVtt;
+    if (s.fmtCsv     !== undefined) $("fmt-csv").checked     = s.fmtCsv;
+    if (s.fmtMarkers !== undefined) $("fmt-markers").checked = s.fmtMarkers;
+  } catch (_) {}
 }
 
-// ── Server health check ────────────────────────────────────────────────────
+// Save whenever a setting changes
+["model","language","task","audio-track","fps","fmt-srt","fmt-vtt","fmt-csv","fmt-markers"]
+  .forEach(id => $( id).addEventListener("change", saveSettings));
+
+// ── Model size hint ─────────────────────────────────────────────────────────
+
+function updateModelNote() {
+  const size = MODEL_SIZES[modelSelect.value] || "";
+  modelNote.textContent = `First use downloads the model (${size})`;
+}
+modelSelect.addEventListener("change", updateModelNote);
+
+// ── Server health ───────────────────────────────────────────────────────────
 
 async function checkServer() {
   try {
-    const res = await fetch(`${SERVER}/api/health`, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`${SERVER}/api/health`, { signal: AbortSignal.timeout(2500) });
     if (res.ok) {
+      const data = await res.json();
       setServerStatus(true);
+      ffmpegBanner.hidden = data.ffmpeg !== false;
       return true;
     }
   } catch (_) {}
@@ -105,32 +109,62 @@ function setServerStatus(ok) {
   serverReady = ok;
   indicator.className = ok ? "connected" : "";
   serverLabel.textContent = ok ? "Server ready" : "Server offline";
+  offlineBanner.hidden = ok;
   btnTranscribe.disabled = !ok || !mediaPath.value.trim();
 }
 
-// Poll server health every 5 s
 setInterval(checkServer, 5000);
 checkServer();
 
-// ── Input events ───────────────────────────────────────────────────────────
+// ── Drag and drop ───────────────────────────────────────────────────────────
+
+dropZone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropZone.classList.add("drag-over");
+});
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+dropZone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropZone.classList.remove("drag-over");
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  // Chromium exposes the real FS path via the non-standard .path property
+  const path = file.path || null;
+  if (path && path.startsWith("/")) {
+    setPath(path);
+  } else {
+    showToast("Could not read file path — type it in manually", "error");
+  }
+});
+
+// ── Browse button ───────────────────────────────────────────────────────────
+
+btnBrowse.addEventListener("click", async () => {
+  btnBrowse.disabled = true;
+  btnBrowse.textContent = "Opening…";
+  try {
+    const res  = await fetch(`${SERVER}/api/pick-file`, { signal: AbortSignal.timeout(120000) });
+    const data = await res.json();
+    if (data.path) setPath(data.path);
+    else if (!data.cancelled) showToast("Could not open file picker", "error");
+  } catch (e) {
+    showToast("File picker unavailable", "error");
+  } finally {
+    btnBrowse.disabled = false;
+    btnBrowse.textContent = "Browse…";
+  }
+});
+
+function setPath(p) {
+  mediaPath.value = p;
+  btnTranscribe.disabled = !serverReady;
+}
 
 mediaPath.addEventListener("input", () => {
   btnTranscribe.disabled = !serverReady || !mediaPath.value.trim();
 });
 
-btnFromAvid.addEventListener("click", async () => {
-  const path = await getAvidSelectedClipPath();
-  if (path) {
-    mediaPath.value = path;
-    btnTranscribe.disabled = !serverReady;
-    showToast("Clip path loaded from bin");
-  } else if (!path) {
-    // Prompt the user if Avid API unavailable
-    showToast("Select a clip in the Avid bin first", "error");
-  }
-});
-
-// ── Transcribe ─────────────────────────────────────────────────────────────
+// ── Transcribe ──────────────────────────────────────────────────────────────
 
 btnTranscribe.addEventListener("click", async () => {
   const path = mediaPath.value.trim();
@@ -141,17 +175,18 @@ btnTranscribe.addEventListener("click", async () => {
   if ($("fmt-vtt").checked)     formats.push("vtt");
   if ($("fmt-csv").checked)     formats.push("csv");
   if ($("fmt-markers").checked) formats.push("avid_markers");
-
   if (!formats.length) { showToast("Select at least one output format", "error"); return; }
 
+  saveSettings();
+
   const body = {
-    media_path:       path,
-    whisper_model:    $("model").value,
-    language:         $("language").value || null,
-    task:             $("task").value,
-    output_formats:   formats,
-    audio_track:      parseInt($("audio-track").value, 10),
-    fps:              parseFloat($("fps").value),
+    media_path:    path,
+    whisper_model: modelSelect.value,
+    language:      $("language").value || null,
+    task:          $("task").value,
+    output_formats:formats,
+    audio_track:   parseInt($("audio-track").value, 10),
+    fps:           parseFloat($("fps").value),
   };
 
   try {
@@ -161,39 +196,31 @@ btnTranscribe.addEventListener("click", async () => {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       showToast(err.detail || "Server error", "error");
       return;
     }
     const data = await res.json();
     currentJobId = data.job_id;
-    startPolling();
     setUIState("running");
+    startPolling();
   } catch (e) {
     showToast("Could not reach server: " + e.message, "error");
   }
 });
 
-// ── Polling ────────────────────────────────────────────────────────────────
+// ── Polling ─────────────────────────────────────────────────────────────────
 
-function startPolling() {
-  stopPolling();
-  pollTimer = setInterval(poll, POLL_MS);
-}
-
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
+function startPolling() { stopPolling(); pollTimer = setInterval(poll, POLL_MS); }
+function stopPolling()  { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
 async function poll() {
   if (!currentJobId) { stopPolling(); return; }
   try {
-    const res = await fetch(`${SERVER}/api/status/${currentJobId}`);
+    const res  = await fetch(`${SERVER}/api/status/${currentJobId}`);
     if (!res.ok) return;
     const data = await res.json();
-
     updateProgress(data.progress, data.message);
-
     if (data.status === "done") {
       stopPolling();
       lastResult = data.result;
@@ -207,65 +234,77 @@ async function poll() {
 }
 
 function updateProgress(frac, msg) {
-  progressFill.style.width = `${Math.round(frac * 100)}%`;
-  progressMsg.textContent = msg || "";
+  progressFill.style.width = `${Math.round((frac || 0) * 100)}%`;
+  progressMsg.textContent  = msg || "";
 }
 
-// ── Done ───────────────────────────────────────────────────────────────────
+// ── Done ─────────────────────────────────────────────────────────────────────
 
 function onDone(result) {
   setUIState("done");
   preview.textContent = result.srt_preview || "(no transcript)";
-  showToast(
-    `Done  ·  ${result.segment_count} segments  ·  ${result.language}  ·  ${result.elapsed?.toFixed(1)}s`,
-    "success"
-  );
+
+  const mins = result.duration ? (result.duration / 60).toFixed(1) : "?";
+  const secs = result.elapsed  ? result.elapsed.toFixed(1)          : "?";
+  resultMeta.textContent =
+    `${result.segment_count} segments · ${result.language} · ${mins} min · processed in ${secs}s`;
+
+  showToast("Transcription complete!", "success");
 }
 
-// ── Post-job actions ───────────────────────────────────────────────────────
+// ── Actions ──────────────────────────────────────────────────────────────────
 
-btnImport.addEventListener("click", async () => {
-  if (!lastResult?.avid_markers) { showToast("No marker data", "error"); return; }
-  await importMarkersIntoAvid(lastResult.avid_markers);
+btnReveal.addEventListener("click", async () => {
+  if (!currentJobId) return;
+  try {
+    await fetch(`${SERVER}/api/reveal/${currentJobId}`);
+    showToast("Opened output folder in Finder");
+  } catch (_) {
+    showToast("Could not open folder", "error");
+  }
 });
 
 btnCopySrt.addEventListener("click", () => {
   if (!lastResult?.srt_preview) return;
-  navigator.clipboard.writeText(lastResult.srt_preview).then(() => {
-    showToast("SRT copied to clipboard", "success");
-  });
+  navigator.clipboard.writeText(lastResult.srt_preview)
+    .then(() => showToast("SRT copied to clipboard", "success"))
+    .catch(() => showToast("Could not copy", "error"));
 });
 
 btnNew.addEventListener("click", () => {
   currentJobId = null;
-  lastResult = null;
+  lastResult   = null;
   mediaPath.value = "";
   setUIState("idle");
   updateProgress(0, "");
   preview.textContent = "";
+  resultMeta.textContent = "";
 });
 
-// ── UI state machine ───────────────────────────────────────────────────────
+// ── UI state machine ─────────────────────────────────────────────────────────
 
 function setUIState(state) {
-  // state: idle | running | done | error
   const running = state === "running";
   const done    = state === "done";
 
-  btnTranscribe.disabled = running || !serverReady;
+  btnTranscribe.disabled    = running || !serverReady;
   btnTranscribe.textContent = running ? "Transcribing…" : "Transcribe";
 
-  progressWrap.className = (running || done) ? "card visible" : "card";
-  previewWrap.className  = done ? "card visible" : "card";
-  actionsWrap.className  = done ? "visible" : "";
+  progressWrap.hidden = !(running || done);
+  resultsWrap.hidden  = !done;
 }
 
-// ── Toast ──────────────────────────────────────────────────────────────────
+// ── Toast ─────────────────────────────────────────────────────────────────────
 
 let toastTimer = null;
 function showToast(msg, type = "") {
   toast.textContent = msg;
-  toast.className = "show" + (type ? " " + type : "");
+  toast.className   = "show" + (type ? " " + type : "");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.className = ""; }, 3500);
 }
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+loadSettings();
+updateModelNote();

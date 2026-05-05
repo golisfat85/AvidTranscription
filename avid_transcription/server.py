@@ -101,7 +101,57 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": "1.0.0"}
+    ffmpeg_ok = _check_ffmpeg()
+    return {"status": "ok", "version": "1.0.0", "ffmpeg": ffmpeg_ok}
+
+
+def _check_ffmpeg() -> bool:
+    import shutil, subprocess
+    if shutil.which("ffmpeg"):
+        return True
+    for p in ("/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"):
+        if Path(p).exists():
+            return True
+    return False
+
+
+@app.get("/api/pick-file")
+def pick_file() -> dict:
+    """Open a native macOS file-picker dialog and return the chosen path."""
+    import subprocess, sys
+    if sys.platform != "darwin":
+        raise HTTPException(status_code=400, detail="File picker only available on macOS")
+    script = (
+        'tell application "System Events"\n'
+        '  set f to choose file with prompt "Select a media file to transcribe"\n'
+        '  return POSIX path of f\n'
+        'end tell'
+    )
+    try:
+        r = subprocess.run(["osascript", "-e", script],
+                           capture_output=True, text=True, timeout=120)
+        path = r.stdout.strip()
+        if r.returncode == 0 and path:
+            return {"path": path}
+        return {"path": None, "cancelled": True}
+    except Exception:
+        return {"path": None, "cancelled": True}
+
+
+@app.get("/api/reveal/{job_id}")
+def reveal_output(job_id: str) -> dict:
+    """Open the job's output folder in macOS Finder."""
+    import subprocess
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job or job.status != "done":
+        raise HTTPException(status_code=404, detail="Job not ready")
+    files = job.result.get("output_files", {}) if job.result else {}
+    if files:
+        folder = str(Path(next(iter(files.values()))).parent)
+        subprocess.Popen(["open", folder])
+        return {"opened": folder}
+    raise HTTPException(status_code=404, detail="No output files")
 
 
 @app.post("/api/transcribe")
