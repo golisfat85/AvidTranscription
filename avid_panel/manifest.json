@@ -1,9 +1,11 @@
 {
   "name": "AvidTranscription",
   "displayName": "Avid Transcription",
+  "title": "Avid Transcription",
   "version": "1.0.0",
   "description": "AI-powered transcription and subtitle generation",
   "author": "AvidTranscription Contributors",
+  "main": "index.html",
   "url": "index.html",
   "width": 420,
   "height": 680,
