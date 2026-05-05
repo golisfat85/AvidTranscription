@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-uninstall — stop and remove the launchd service cleanly.
+# Pre-uninstall — clean up any legacy launchd service from older versions.
 
 PLIST_NAME="com.avidtranscription.server"
 LOGGED_IN_USER=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
@@ -13,9 +13,10 @@ USER_HOME=$(dscl . -read "/Users/$LOGGED_IN_USER" NFSHomeDirectory 2>/dev/null \
 PLIST="$USER_HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 
 if [ -f "$PLIST" ]; then
+  USER_ID=$(id -u "$LOGGED_IN_USER" 2>/dev/null)
+  [ -n "$USER_ID" ] && launchctl bootout "gui/$USER_ID/$PLIST_NAME" 2>/dev/null || true
   su - "$LOGGED_IN_USER" -c "launchctl unload '$PLIST' 2>/dev/null" || true
   rm -f "$PLIST"
-  echo "launchd service removed."
 fi
 
 exit 0

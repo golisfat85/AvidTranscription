@@ -1,7 +1,12 @@
 #!/bin/bash
 # Post-install — runs as root.
-# The Python venv was pre-built during CI and is already in /Library/AvidTranscription/venv/.
-# This script only copies panel files, fixes permissions, and registers the launchd service.
+# The Python venv was pre-built during CI and is already at
+# /Library/AvidTranscription/venv/. This script:
+#   1. Removes Gatekeeper quarantine on bundled binaries
+#   2. Fixes permissions
+#   3. Copies the Avid HTML panel to the user's Avid folder
+#   4. Installs the .app to /Applications
+# The server is started on-demand by AvidTranscription.app — no launchd.
 
 LOG="/Library/AvidTranscription/logs/install.log"
 mkdir -p "/Library/AvidTranscription/logs"
@@ -10,8 +15,6 @@ echo ""
 echo "=== Avid Transcription postinstall: $(date) ==="
 
 PAYLOAD_DIR="/Library/AvidTranscription"
-PLIST_NAME="com.avidtranscription.server"
-PLIST_SRC="$PAYLOAD_DIR/$PLIST_NAME.plist"
 
 # ── Resolve the logged-in user ────────────────────────────────────────────────
 LOGGED_IN_USER=$(scutil <<< "show State:/Users/ConsoleUser" 2>/dev/null \
@@ -27,15 +30,22 @@ USER_HOME=$(dscl . -read "/Users/$LOGGED_IN_USER" NFSHomeDirectory 2>/dev/null \
 [ -z "$USER_HOME" ] && USER_HOME="/Users/$LOGGED_IN_USER"
 echo "Home: $USER_HOME"
 
+# ── Strip Gatekeeper quarantine ───────────────────────────────────────────────
+# Without this, the venv's Python binary may be silently blocked by macOS.
+echo "Removing Gatekeeper quarantine attribute …"
+xattr -dr com.apple.quarantine "$PAYLOAD_DIR" 2>/dev/null || true
+
 # ── Fix venv permissions ──────────────────────────────────────────────────────
 echo "Fixing venv permissions …"
 chmod -R a+rX "$PAYLOAD_DIR/venv" 2>/dev/null || true
-chmod +x "$PAYLOAD_DIR/venv/bin/python" "$PAYLOAD_DIR/venv/bin/python3" 2>/dev/null || true
-# Make all venv scripts executable
-find "$PAYLOAD_DIR/venv/bin" -type f | while read -r f; do
-  [ -x "$f" ] || chmod +x "$f"
-done
-echo "Venv is ready."
+find "$PAYLOAD_DIR/venv/bin" -type f -exec chmod +x {} \; 2>/dev/null || true
+
+# Quick smoke test so we know the venv works
+if "$PAYLOAD_DIR/venv/bin/python" -c "import avid_transcription, fastapi, uvicorn" 2>&1; then
+  echo "Venv smoke test: OK"
+else
+  echo "WARNING: Venv smoke test failed — server may not start." >&2
+fi
 
 # ── Copy Avid panel files ─────────────────────────────────────────────────────
 AVID_PANELS="$USER_HOME/Library/Application Support/Avid/Avid Media Composer/SupportingFiles/Panels"
@@ -51,36 +61,21 @@ if [ -d "$PAYLOAD_DIR/AvidTranscription.app" ]; then
   rm -rf /Applications/AvidTranscription.app
   cp -r "$PAYLOAD_DIR/AvidTranscription.app" /Applications/
   chmod +x "/Applications/AvidTranscription.app/Contents/MacOS/AvidTranscription"
+  xattr -dr com.apple.quarantine /Applications/AvidTranscription.app 2>/dev/null || true
   chown -R "$LOGGED_IN_USER" /Applications/AvidTranscription.app 2>/dev/null || true
   echo "App installed to /Applications."
 fi
 
-# ── Install and start launchd service ────────────────────────────────────────
-if [ -f "$PLIST_SRC" ]; then
-  LAUNCH_AGENTS="$USER_HOME/Library/LaunchAgents"
-  PLIST_DEST="$LAUNCH_AGENTS/$PLIST_NAME.plist"
-
-  mkdir -p "$LAUNCH_AGENTS"
-  cp "$PLIST_SRC" "$PLIST_DEST"
-  chown "$LOGGED_IN_USER" "$PLIST_DEST"
-
-  # Resolve the numeric UID for launchctl bootstrap (required on Sonoma 14+).
-  USER_ID=$(id -u "$LOGGED_IN_USER" 2>/dev/null || dscl . -read "/Users/$LOGGED_IN_USER" UniqueID 2>/dev/null | awk '{print $2}')
-
+# ── Clean up any stale launchd service from previous installs ─────────────────
+OLD_PLIST="$USER_HOME/Library/LaunchAgents/com.avidtranscription.server.plist"
+if [ -f "$OLD_PLIST" ]; then
+  echo "Removing legacy launchd service …"
+  USER_ID=$(id -u "$LOGGED_IN_USER" 2>/dev/null)
   if [ -n "$USER_ID" ]; then
-    # Remove any previously registered instance first (ignore errors).
-    launchctl bootout "gui/$USER_ID/$PLIST_NAME" 2>/dev/null || true
-    # Bootstrap into the user's GUI session — works on macOS Ventura + Sonoma.
-    launchctl bootstrap "gui/$USER_ID" "$PLIST_DEST" 2>/dev/null || \
-      su - "$LOGGED_IN_USER" -c "launchctl load -w '$PLIST_DEST'" 2>/dev/null || true
-    echo "launchd service installed (uid=$USER_ID)."
-  else
-    # Fallback for edge cases where id -u fails.
-    su - "$LOGGED_IN_USER" -c "launchctl unload '$PLIST_DEST' 2>/dev/null; launchctl load -w '$PLIST_DEST'" 2>/dev/null || true
-    echo "launchd service installed (fallback)."
+    launchctl bootout "gui/$USER_ID/com.avidtranscription.server" 2>/dev/null || true
   fi
-else
-  echo "WARNING: plist not found at $PLIST_SRC — server will not auto-start." >&2
+  su - "$LOGGED_IN_USER" -c "launchctl unload '$OLD_PLIST' 2>/dev/null" || true
+  rm -f "$OLD_PLIST"
 fi
 
 echo "=== postinstall complete ==="
