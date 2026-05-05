@@ -35,16 +35,16 @@ echo "Home: $USER_HOME"
 echo "Removing Gatekeeper quarantine attribute …"
 xattr -dr com.apple.quarantine "$PAYLOAD_DIR" 2>/dev/null || true
 
-# ── Fix venv permissions ──────────────────────────────────────────────────────
-echo "Fixing venv permissions …"
-chmod -R a+rX "$PAYLOAD_DIR/venv" 2>/dev/null || true
-find "$PAYLOAD_DIR/venv/bin" -type f -exec chmod +x {} \; 2>/dev/null || true
+# ── Fix Python permissions ────────────────────────────────────────────────────
+echo "Fixing Python permissions …"
+chmod -R a+rX "$PAYLOAD_DIR/python" 2>/dev/null || true
+find "$PAYLOAD_DIR/python/bin" -type f -exec chmod +x {} \; 2>/dev/null || true
 
-# Quick smoke test so we know the venv works
-if "$PAYLOAD_DIR/venv/bin/python" -c "import avid_transcription, fastapi, uvicorn" 2>&1; then
-  echo "Venv smoke test: OK"
+# Quick smoke test so we know the bundled Python works
+if "$PAYLOAD_DIR/python/bin/python3" -c "import avid_transcription, fastapi, uvicorn" 2>&1; then
+  echo "Python smoke test: OK"
 else
-  echo "WARNING: Venv smoke test failed — server may not start." >&2
+  echo "WARNING: Python smoke test failed — server may not start." >&2
 fi
 
 # ── Copy Avid panel files ─────────────────────────────────────────────────────

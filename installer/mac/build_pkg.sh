@@ -28,13 +28,15 @@ PAYLOAD="$SCRIPT_DIR/payload"
 rm -rf "$PAYLOAD"
 mkdir -p "$PAYLOAD/Library/AvidTranscription"
 
-# Pre-built venv (created by CI before calling this script)
-VENV_PAYLOAD="$SCRIPT_DIR/venv_payload"
-if [ -d "$VENV_PAYLOAD" ]; then
-  echo "  Bundling pre-built venv …"
-  cp -r "$VENV_PAYLOAD" "$PAYLOAD/Library/AvidTranscription/venv"
+# Bundled relocatable Python (python-build-standalone) with our package
+# pre-installed — created by CI before calling this script.
+PYTHON_PAYLOAD="$SCRIPT_DIR/python_payload"
+if [ -d "$PYTHON_PAYLOAD" ]; then
+  echo "  Bundling relocatable Python …"
+  cp -r "$PYTHON_PAYLOAD" "$PAYLOAD/Library/AvidTranscription/python"
 else
-  echo "WARNING: venv_payload not found — postinstall will not have a bundled venv." >&2
+  echo "ERROR: python_payload not found at $PYTHON_PAYLOAD" >&2
+  exit 1
 fi
 
 # Wheel (kept for reference / manual reinstall)
@@ -46,9 +48,6 @@ cp -r "$REPO_ROOT/avid_panel/." "$PAYLOAD/Library/AvidTranscription/avid_panel/"
 # App bundle
 cp -r "$SCRIPT_DIR/app/AvidTranscription.app" "$PAYLOAD/Library/AvidTranscription/"
 chmod +x "$PAYLOAD/Library/AvidTranscription/AvidTranscription.app/Contents/MacOS/AvidTranscription"
-
-# launchd plist (postinstall copies this to ~/Library/LaunchAgents/)
-cp "$SCRIPT_DIR/launchd/com.avidtranscription.server.plist" "$PAYLOAD/Library/AvidTranscription/"
 
 # ── Make scripts executable ────────────────────────────────────────────────
 chmod +x "$SCRIPT_DIR/scripts/preinstall"

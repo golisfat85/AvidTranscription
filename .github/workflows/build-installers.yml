@@ -110,23 +110,26 @@ jobs:
           name: wheel
           path: dist/
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Pre-build Python venv with package installed
+      - name: Download relocatable Python (python-build-standalone)
         run: |
-          # Build a self-contained venv that will be bundled into the .pkg.
-          # The postinstall script will NOT run pip — it just copies files.
-          VENV_DIR="installer/mac/venv_payload"
-          python3 -m venv --copies "$VENV_DIR"
-          "$VENV_DIR/bin/pip" install --upgrade pip --quiet
-          "$VENV_DIR/bin/pip" install dist/*.whl --quiet
-          # Verify import works
-          "$VENV_DIR/bin/python" -c "import avid_transcription; print('Package OK')"
-          echo "Venv built at $VENV_DIR"
-          du -sh "$VENV_DIR"
+          # python-build-standalone produces a truly self-contained Python
+          # that uses @executable_path rpaths and bundles its own framework.
+          # Unlike actions/setup-python's Python, it works after relocation.
+          PBS_TAG="20241016"
+          PY_VERSION="3.11.10"
+          ARCH="aarch64"   # Apple Silicon
+          URL="https://github.com/indygreg/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PY_VERSION}+${PBS_TAG}-${ARCH}-apple-darwin-install_only.tar.gz"
+          mkdir -p installer/mac/python_payload
+          curl -fsSL "$URL" | tar -xz -C installer/mac/python_payload --strip-components=1
+          ls installer/mac/python_payload/bin/
+
+      - name: Install package into bundled Python
+        run: |
+          PYTHON="installer/mac/python_payload/bin/python3"
+          "$PYTHON" -m pip install --upgrade pip --quiet
+          "$PYTHON" -m pip install dist/*.whl --quiet
+          "$PYTHON" -c "import avid_transcription, fastapi, uvicorn; print('Package OK')"
+          du -sh installer/mac/python_payload
 
       - name: Update version in Distribution.xml
         run: |

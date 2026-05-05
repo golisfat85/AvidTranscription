@@ -5,6 +5,7 @@ __pycache__/
 dist/
 .venv/
 installer/mac/venv_payload/
+installer/mac/python_payload/
 installer/mac/payload/
 installer/mac/Output/
 installer/mac/*.pkg

@@ -10,8 +10,8 @@ exec >> "$LOG" 2>&1
 echo ""
 echo "=== AvidTranscription.app opened: $(date) ==="
 
-VENV="/Library/AvidTranscription/venv"
-PYTHON="$VENV/bin/python"
+PYTHON_DIR="/Library/AvidTranscription/python"
+PYTHON="$PYTHON_DIR/bin/python3"
 PORT=8765
 HEALTH_URL="http://localhost:$PORT/api/health"
 
@@ -24,7 +24,7 @@ fi
 
 # ── Sanity check the venv ─────────────────────────────────────────────────────
 if [ ! -x "$PYTHON" ]; then
-  osascript -e 'display dialog "AvidTranscription is not installed correctly.\n\nThe Python environment is missing at /Library/AvidTranscription/venv/.\n\nPlease re-run the installer (.pkg)." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"' 2>/dev/null
+  osascript -e 'display dialog "AvidTranscription is not installed correctly.\n\nThe Python environment is missing at /Library/AvidTranscription/python/.\n\nPlease re-run the installer (.pkg)." buttons {"OK"} default button "OK" with icon stop with title "Avid Transcription"' 2>/dev/null
   exit 1
 fi
 
