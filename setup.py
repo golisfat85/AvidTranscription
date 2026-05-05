@@ -20,6 +20,7 @@ setup(
         "uvicorn>=0.29.0",
         "pydantic>=2.0.0",
         "httpx>=0.27.0",
+        "aiofiles>=23.0.0",   # required by FastAPI StaticFiles
         # Utilities
         "requests>=2.31.0",
         "numpy>=1.24.0",

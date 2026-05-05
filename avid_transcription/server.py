@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .audio_extractor import AudioExtractor, AudioExtractorError
@@ -195,16 +196,18 @@ def download(job_id: str, fmt: str) -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
-# Serve the panel HTML (so Avid can load it from http://localhost:8765)
+# Serve the panel HTML + static assets (CSS, JS) from the panel directory.
+# StaticFiles with html=True serves index.html for "/" automatically and
+# handles css/, js/ subpaths — MUST be mounted after all @app.get routes
+# so the /api/* routes take priority.
 # ---------------------------------------------------------------------------
 
-@app.get("/")
-@app.get("/panel")
-def panel_index():
-    index = PANEL_DIR / "index.html"
-    if not index.exists():
-        return JSONResponse({"error": "Panel files not found"}, status_code=404)
-    return FileResponse(str(index))
+def _mount_panel() -> None:
+    if PANEL_DIR.exists():
+        app.mount("/", StaticFiles(directory=str(PANEL_DIR), html=True), name="panel")
+        logger.info("Panel mounted from %s", PANEL_DIR)
+    else:
+        logger.warning("Panel directory not found: %s", PANEL_DIR)
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +267,7 @@ def _run_job(job: JobState, audio_track: int, fps: float) -> None:
 
 def run(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
     import uvicorn
+    _mount_panel()
     logger.info("Starting Avid Transcription server on http://%s:%d", host, port)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
